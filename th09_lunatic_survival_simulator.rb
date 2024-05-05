@@ -2,8 +2,8 @@ require 'CSV'
 
 $option = {
   debug: false,
-  base_shottype: :Sakuya, # 基準とする機体
-  base_6lives_twcscore: 58, # 基準とする残6TWCスコア
+  base_shottype: :Youmu, # 基準とする機体
+  base_6lives_twcscore: 15.96, # 基準とする残6TWCスコア
   s9r1_time_multiplier: 0.02, # S9R1の経過秒数の係数
   _7lives_twcscore: 60, # 霊夢/映姫残7のTWCScore
   match_time: -1, # 0以下: FR
@@ -192,19 +192,6 @@ module Th09LunaticSurvival
       @res = []
     end
 
-    def stats
-      run()
-      h = @res.group_by{|lives, round_time| lives }
-      s = "Lives\t"
-      (0..7).each{|i|
-        count = h.key?(i) ? h[i].size : 0
-        s += sprintf("%d:%4.1f%%\t", i, count.fdiv(@res.size)*100)
-      }
-      ave = @res.sum{|lives, round_time| lives }.fdiv(@res.size)
-      s += "ave:#{ave}"
-      s
-    end
-
     def run
       return @res if !@res.empty?
       @res = []
@@ -227,21 +214,67 @@ module Th09LunaticSurvival
       @res = CSV.read(@csv).map{|a| a.map &:to_i }
     end
 
+    # 残機統計
+    def life_stats
+      run()
+      s = "# Lives\t"
+      h = @res.group_by{|lives, round_time| lives }
+      a = (0..7).map{|i|
+        count = h.key?(i) ? h[i].size : 0
+        sprintf("%d:%4.1f%%", i, count.fdiv(@res.size)*100)
+      } + ["ave:#{@res.sum{|lives, round_time| lives }.fdiv(@res.size)}"]
+      s += a * ", "
+      s
+    end
+
+    # 突破ラウンド統計
+    def round_stats
+      s = "# Rounds\t"
+      s += (6..9).map{|stage|
+        key = "s#{stage}".intern
+        round_times_a = Match.shottype_data[@shottype][key].map{|x| x.first }
+        h = round_times_a.group_by{|round_times| round_times.size }
+        n = stage == 9 ? 4 : 3
+        left = (1..n).map{|i| "R#{i}"} * ":"
+        right = (1..n).map{|i| h.key?(i) ? h[i].size : 0 } * ":"
+        "S#{stage}(#{left}=#{right})"
+      } * ", "
+      s
+    end
+
+    # S9R1統計
+    def s9r1_time_stats
+      s = "# S9R1 Time\t"
+      s9r1_times = Match.shottype_data[@shottype][:s9].map{|x| x.first.first }
+      h = {
+        max: s9r1_times.max,
+        min: s9r1_times.min,
+        ave: s9r1_times.sum/s9r1_times.size,
+        med: (a = s9r1_times.sort; (a[a.size/2]+a[(a.size-1)/2])/2),
+      }
+      s += h.map{|k, v| "#{k}:#{s2ms(v)}" } * ", "
+      s
+    end
+
+    # 統計
+    def stats
+      [life_stats, round_stats, s9r1_time_stats] * "\n"
+    end
+
     def TWCScore(n, l, s)
       (l == 7 ? @m : n * 0.5**(6-l)) + s * @s9r1_time_multiplier
     end
 
+    # 平均TWCスコアが目標値になる残6TWCスコアの値を求める
     def invert_6lives_TWCScore(target_twcscore)
       run()
-      (1..1000.0).bsearch{|n|
-        twcscore = @res.map{|l, s|
-          TWCScore(n, l, s)
-        }.sum.fdiv(@res.size)
-        twcscore > target_twcscore
+      (-1000.0..1000.0).bsearch{|n|
+        average_TWCScore(n) > target_twcscore
       }
     end
 
-    def average_TWCScore(n, m=$option[:_7lives_twcscore])
+    # TWCスコアの平均値を求める
+    def average_TWCScore(n)
       run()
       twcscore = @res.map{|l, s|
         TWCScore(n, l, s)
@@ -262,5 +295,6 @@ Match.shottype_names.each{|st|
 
   sim = Simulator.new(st)
   printf("%s\t%5.2f\n", st, sim.invert_6lives_TWCScore(target_twcscore))
-  puts "# "+sim.stats
+  puts sim.stats
+  puts
 }
